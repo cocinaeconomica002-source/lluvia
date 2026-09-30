@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.LluviaPos" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">#0c0c0c</item>
+        <item name="android:navigationBarColor">#0c0c0c</item>
+    </style>
+</resources>
