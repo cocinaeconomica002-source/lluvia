@@ -239,6 +239,14 @@ canvas{width:100%;max-width:100%}
   </div>
 </div>
 
+<div class="modal-bg" id="modTicket">
+  <div class="modal">
+    <h2>Detalle del ticket</h2>
+    <div id="ticketDetail"></div>
+    <button class="btn ghost" style="width:100%;margin-top:12px" onclick="closeModal('modTicket')">Cerrar</button>
+  </div>
+</div>
+
 <div class="modal-bg" id="modCheckout">
   <div class="modal">
     <h2>Cerrar venta</h2>
@@ -266,6 +274,7 @@ let products = store.get('lh_products',[]);
 let sales = store.get('lh_sales',[]);
 let movs = store.get('lh_movs',[]);
 let daily = store.get('lh_daily',[]);
+let itemSales = store.get('lh_itemsales',[]); // historial de productos vendidos (no se borra con el corte)
 let cart = [];
 let movType = 'entrada';
 let editingProductId = null;
@@ -322,7 +331,21 @@ function resizeImage(file,maxDim){
   return new Promise(async(resolve)=>{
     let settled=false;
     const finish=(v)=>{if(!settled){settled=true;resolve(v)}};
-    setTimeout(()=>finish(null),4000);
+    setTimeout(()=>finish(null),20000);
+    // Camino rápido: decodifica el archivo directo (sin pasar por base64),
+    // mucho más rápido y liviano para fotos grandes de celular.
+    if(window.createImageBitmap){
+      try{
+        const bitmap=await createImageBitmap(file);
+        let w=bitmap.width,h=bitmap.height;
+        if(w>h){if(w>maxDim){h=Math.round(h*maxDim/w);w=maxDim}}
+        else{if(h>maxDim){w=Math.round(w*maxDim/h);h=maxDim}}
+        const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+        cv.getContext('2d').drawImage(bitmap,0,0,w,h);
+        finish(cv.toDataURL('image/jpeg',0.6));
+        return;
+      }catch(e){ /* si falla, probamos el método de respaldo abajo */ }
+    }
     try{
       const dataUrl=await fileToB64(file);
       const img=new Image();
@@ -518,7 +541,11 @@ function finishSale(){
   cart.forEach(it=>{
     const p=products.find(x=>x.id===it.id);
     if(p && p.stock!=null) p.stock=Math.max(0,p.stock-it.qty);
+    itemSales.push({date:sale.date,name:it.name,qty:it.qty});
   });
+  const pruneCutoff=Date.now()-10*24*3600*1000;
+  itemSales=itemSales.filter(e=>new Date(e.date).getTime()>=pruneCutoff);
+  store.set('lh_itemsales',itemSales);
   store.set('lh_products',products);
   closeModal('modCheckout');
   if(phone) sendWhatsApp(sale);
@@ -594,7 +621,7 @@ function renderAdmin(){
 function drawChart(){
   const cutoff=Date.now()-7*24*3600*1000;
   const qty={};
-  sales.filter(s=>new Date(s.date).getTime()>=cutoff).forEach(s=>s.items.forEach(it=>{qty[it.name]=(qty[it.name]||0)+it.qty}));
+  itemSales.filter(e=>new Date(e.date).getTime()>=cutoff).forEach(e=>{qty[e.name]=(qty[e.name]||0)+e.qty});
   const entries=Object.entries(qty).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const cv=document.getElementById('chart'); const ctx=cv.getContext('2d');
   cv.width=cv.clientWidth; cv.height=190;
@@ -770,10 +797,26 @@ function renderVentas(){
     const d=document.createElement('div'); d.className='list-item'; d.style.alignItems='flex-start';
     const fecha=new Date(s.date).toLocaleString('es-MX',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     const items=s.items.map(i=>i.qty+'x '+i.name).join(', ');
-    const wa = s.client&&s.client.phone ? `<button class="btn small orange" onclick='sendWhatsApp(sales.find(x=>x.id==="${s.id}"))'>Reenviar WhatsApp</button>` : '';
-    d.innerHTML=`<div class="ph">🧾</div><div class="info"><b>${fecha}${s.client&&s.client.name?' · '+s.client.name:''}</b><span>${items}</span><span>Total ${money(s.total)}</span></div><div class="actions" style="flex-direction:column">${wa}<button class="btn small danger" onclick="requestDeleteSale('${s.id}')">Devolver/Eliminar</button></div>`;
+    const wa = s.client&&s.client.phone ? `<button class="btn small orange" onclick='event.stopPropagation();sendWhatsApp(sales.find(x=>x.id==="${s.id}"))'>Reenviar WhatsApp</button>` : '';
+    d.innerHTML=`<div class="ph">🧾</div><div class="info"><b>${fecha}${s.client&&s.client.name?' · '+s.client.name:''}</b><span>${items}</span><span>Total ${money(s.total)}</span></div><div class="actions" style="flex-direction:column">${wa}<button class="btn small danger" onclick="event.stopPropagation();requestDeleteSale('${s.id}')">Devolver/Eliminar</button></div>`;
+    d.style.cursor='pointer';
+    d.onclick=()=>viewSaleDetail(s.id);
     l.appendChild(d);
   });
+}
+
+function viewSaleDetail(id){
+  const s=sales.find(x=>x.id===id); if(!s) return;
+  const fecha=new Date(s.date).toLocaleString('es-MX',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  let rows=s.items.map(it=>`<div class="cart-row" style="color:#333;border-color:#eee"><span>${it.qty}x ${it.name}</span><span>${money(it.price*it.qty)}</span></div>`).join('');
+  document.getElementById('ticketDetail').innerHTML=`
+    <p style="font-size:13px;color:#777;margin:0 0 6px">${fecha}</p>
+    ${s.client&&(s.client.name||s.client.phone)?`<p style="font-size:13px;margin:0 0 10px"><b>Cliente:</b> ${s.client.name||'-'} ${s.client.phone?'· '+s.client.phone:''}</p>`:''}
+    ${rows}
+    <div class="cart-row" style="color:#333;border-color:#eee;font-weight:800"><span>Total</span><span>${money(s.total)}</span></div>
+    <p style="font-size:13px;margin:10px 0 0">💵 Efectivo: ${money(s.cash||0)} &nbsp; 🔁 Transferencia/Tarjeta: ${money(s.other||0)}</p>
+  `;
+  openModal('modTicket');
 }
 
 function requestDeleteSale(id){
@@ -787,7 +830,7 @@ function requestDeleteSale(id){
 }
 
 function exportBackup(){
-  const data={products,sales,movs,daily};
+  const data={products,sales,movs,daily,itemSales};
   const json=JSON.stringify(data);
   const bfilename=`respaldo_lluvia_${todayStr()}.json`;
   if(window.AndroidBridge && window.AndroidBridge.saveFile){ window.AndroidBridge.saveFile(bfilename, json); return; }
@@ -804,8 +847,8 @@ function importBackupFile(input){
     try{
       const data=JSON.parse(r.result);
       if(!confirm('Esto reemplazará todos tus datos actuales con los del respaldo. ¿Continuar?')) return;
-      products=data.products||[]; sales=data.sales||[]; movs=data.movs||[]; daily=data.daily||[];
-      store.set('lh_products',products); store.set('lh_sales',sales); store.set('lh_movs',movs); store.set('lh_daily',daily);
+      products=data.products||[]; sales=data.sales||[]; movs=data.movs||[]; daily=data.daily||[]; itemSales=data.itemSales||[];
+      store.set('lh_products',products); store.set('lh_sales',sales); store.set('lh_movs',movs); store.set('lh_daily',daily); store.set('lh_itemsales',itemSales);
       renderProducts(); renderAdmin(); renderVentas();
       alert('Respaldo importado correctamente');
     }catch(e){alert('Archivo de respaldo inválido')}
