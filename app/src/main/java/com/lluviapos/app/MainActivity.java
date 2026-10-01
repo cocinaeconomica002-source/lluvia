@@ -18,9 +18,13 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Toast;
 
+import android.view.View;
+import android.view.WindowManager;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import android.util.Base64;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -42,6 +46,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         requestNeededPermissions();
+        hideSystemBars();
 
         webView = new WebView(this);
         setContentView(webView);
@@ -78,6 +83,25 @@ public class MainActivity extends AppCompatActivity {
         });
 
         webView.loadUrl("file:///android_asset/www/index.html");
+    }
+
+    private void hideSystemBars() {
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        View decor = getWindow().getDecorView();
+        decor.setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideSystemBars();
     }
 
     private void requestNeededPermissions() {
@@ -135,9 +159,19 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void saveFile(final String filename, final String content) {
+            String mime = filename.endsWith(".json") ? "application/json" : "text/csv";
+            writeBytes(filename, mime, content.getBytes(StandardCharsets.UTF_8));
+        }
+
+        @JavascriptInterface
+        public void saveBinaryFile(final String filename, final String base64Content) {
+            byte[] bytes = Base64.decode(base64Content, Base64.DEFAULT);
+            writeBytes(filename, "application/pdf", bytes);
+        }
+
+        private void writeBytes(final String filename, final String mime, final byte[] bytes) {
             activity.runOnUiThread(() -> {
                 try {
-                    String mime = filename.endsWith(".json") ? "application/json" : "text/csv";
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         ContentValues values = new ContentValues();
                         values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
@@ -147,7 +181,7 @@ public class MainActivity extends AppCompatActivity {
                         if (uri != null) {
                             OutputStream out = activity.getContentResolver().openOutputStream(uri);
                             if (out != null) {
-                                out.write(content.getBytes(StandardCharsets.UTF_8));
+                                out.write(bytes);
                                 out.close();
                             }
                         }
@@ -156,7 +190,7 @@ public class MainActivity extends AppCompatActivity {
                         if (!dir.exists()) dir.mkdirs();
                         File file = new File(dir, filename);
                         FileOutputStream fos = new FileOutputStream(file);
-                        fos.write(content.getBytes(StandardCharsets.UTF_8));
+                        fos.write(bytes);
                         fos.close();
                     }
                     Toast.makeText(activity, "Guardado en Descargas/LluviaPOS: " + filename, Toast.LENGTH_LONG).show();
